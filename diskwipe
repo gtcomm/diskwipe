@@ -1,0 +1,538 @@
+# Disk wiping script by GloboTech
+# To lease a dedicated server or get managed services please visit www.globo.tech
+
+#!/bin/bash
+###################### HARD DISK TEST AND WIPE SCRIPT ############################
+# Requirements:
+#    - brain (don't wipe the USB key please. there is a mechanism to prevent that)
+#    - smartmontools / hdparm / dd / fdisk / lsblk / jq / fio
+###################################################################################
+
+# Verify if dependencies are present or not
+smartctl=$(command -v smartctl)
+fio=$(command -v fio)
+hdparm=$(command -v hdparm)
+lsblk=$(command -v lsblk)
+jq=$(command -v jq)
+
+MISDEPS=()
+if [ -z "$smartctl" ]; then
+        MISDEPS+=('smartmontools')
+fi
+if [ -z "$fio" ]; then
+        MISDEPS+=('fio')
+fi
+if [ -z "$hdparm" ]; then
+        MISDEPS+=('hdparm')
+fi
+if [ -z "$lsblk" ]; then
+        MISDEPS+=('lsblk')
+fi
+if [ -z "$jq" ]; then
+        MISDEPS+=('jq')
+fi
+if [ -z "$MISDEPS" ]; then
+        STATUS="GOOD"
+else
+    	STATUS="BAD"
+        echo "Missing dependencies:" ${MISDEPS[@]}
+        exit
+fi
+
+function add_white_spaces ()
+{
+	# Validate Arguments
+	[ -z "$1" ] && return 2
+	[ -z "$2" ] && return 2
+
+	# Set the arguments to local variables
+	local STR_ORIG=$1
+	local STR_LENGHT_MAX=$2
+
+	# Get String Lenght
+        local STR_LENGHT=`echo ${STR_ORIG} | wc -m` || return 4
+        local STR_LENGHT=`expr ${STR_LENGHT} - 1` || return 4
+
+        # Set the right amount of White Spaces
+        if [ "${STR_LENGHT}" -lt "${STR_LENGHT_MAX}" ]; then
+                local WHITESPACE_COUNT=`expr ${STR_LENGHT_MAX} - ${STR_LENGHT}` || return 4
+
+                whitespace_counter="0"
+
+                while [ "${whitespace_counter}" -lt "${WHITESPACE_COUNT}" ]; do
+                        whitespace_counter=`expr $whitespace_counter + 1` || return 4
+                        local WHITESPACES="${WHITESPACES} " || return 4
+                done
+        fi
+
+	# Return Value & Code
+	echo "${STR_ORIG}${WHITESPACES}" && return 0
+}
+
+# Function print_output_state
+function print_output_state ()
+{
+        # Validate Arguments
+        [ -z "$1" ] && return 2
+        [ -z "$2" ] && return 2
+
+        # Set the arguments to local variables
+        local STATE_OUTPUT=$1
+        local STATE_CODE=$2
+	local OUTPUT_LAYOUT=$3
+
+	# Get the Output String Lenght (Character Count)
+	local STR_LENGHT=`echo ${STATE_OUTPUT} | wc -m`
+	local STR_LENGHT=`expr ${STR_LENGHT} - 1`
+
+	# Set Max Output String Lenght
+	local STR_LENGHT_MAX="40"
+
+	# Set the right amount of White Spaces
+	if [ "${STR_LENGHT}" -lt ${STR_LENGHT_MAX} ]; then
+		local WHITESPACE_COUNT=`expr ${STR_LENGHT_MAX} - ${STR_LENGHT}`
+
+		whitespace_counter="0"
+
+		while [ "${whitespace_counter}" -lt "${WHITESPACE_COUNT}" ]; do
+			whitespace_counter=`expr $whitespace_counter + 1`
+			local WHITESPACES="${WHITESPACES} "
+		done
+	fi
+
+	# yesno Layout Specified
+	if [ "${OUTPUT_LAYOUT}" = "yesno" ]; then
+
+	        if [ "${STATE_CODE}" = "0" ]; then
+        	  	echo -e "${STATE_OUTPUT}${WHITESPACES}[YES]" || return 4
+	        fi
+
+	        if [ "${STATE_CODE}" = "1" ]; then
+	                echo -e "${STATE_OUTPUT}${WHITESPACES}[NO]" || return 4
+	        fi
+
+	# Default Layout
+	else
+                if [ "${STATE_CODE}" = "0" ]; then
+                        echo -e "${STATE_OUTPUT}${WHITESPACES}[OK]" || return 4
+                fi
+
+                if [ "${STATE_CODE}" = "1" ]; then
+                        echo -e "${STATE_OUTPUT}${WHITESPACES}[FAILED]" || return 4
+                fi
+	fi
+
+        if [ "${STATE_CODE}" = "2" ]; then
+                echo -e "${STATE_OUTPUT}${WHITESPACES}[SCRIPT ERROR 2]" || return 4
+        fi
+
+        if [ "${STATE_CODE}" = "3" ]; then
+                echo -e "${STATE_OUTPUT}${WHITESPACES}[SCRIPT ERROR 3]" || return 4
+        fi
+
+        if [ "${STATE_CODE}" = "4" ]; then
+                echo -e "${STATE_OUTPUT}${WHITESPACES}[SCRIPT ERROR 4]" || return 4
+        fi
+
+ 	if [ "${STATE_CODE}" = "5" ]; then
+                # Print Warning Output
+                echo -e "${STATE_OUTPUT}${WHITESPACES}[WARNING]" || return 4
+        fi
+
+      	# Return Code
+        return 0
+}
+# Function print_custom_output_state
+function print_custom_output_state ()
+{
+        # Validate Arguments
+        [ -z "$1" ] && return 2
+        [ -z "$2" ] && return 2
+
+        # Set the arguments to local variables
+        local STATE_OUTPUT_TEXT=$1
+        local STATE_OUTPUT_VALUE=$2
+        [ -z "$3" ] || local STATE_OUTPUT_VALUE_POSITION=$3
+
+        # Get the Output String Lenght (Character Count)
+        local STR_LENGHT=`echo ${STATE_OUTPUT_TEXT} | wc -m`
+        local STR_LENGHT=`expr ${STR_LENGHT} - 1`
+
+        # Set Max Output String Lenght
+        if [ -z "${STATE_OUTPUT_VALUE_POSITION}" ]; then
+                local STR_LENGHT_MAX="40"
+        else
+                local STR_LENGHT_MAX="${STATE_OUTPUT_VALUE_POSITION}"
+        fi
+
+        # Set the right amount of White Spaces
+        if [ "${STR_LENGHT}" -lt ${STR_LENGHT_MAX} ]; then
+                local WHITESPACE_COUNT=`expr ${STR_LENGHT_MAX} - ${STR_LENGHT}`
+
+                whitespace_counter="0"
+
+                while [ "${whitespace_counter}" -lt "${WHITESPACE_COUNT}" ]; do
+                        whitespace_counter=`expr $whitespace_counter + 1`
+                        local WHITESPACES="${WHITESPACES} "
+                done
+        fi
+
+        # Print Custom Output State
+        echo -e "${STATE_OUTPUT_TEXT}${WHITESPACES}[${STATE_OUTPUT_VALUE}]" || return 4
+
+        # Return Code
+        return 0
+}
+
+# Function print_empty_line
+function print_empty_line ()
+{
+	# Echo an empty line
+        echo "" || return 4
+
+        # Return Code
+        return 0
+}
+
+# Function get_start_smart
+function get_start_smart ()
+{
+        # Validate Argument
+        [ -z "$1" ] && return 2
+
+        # Set the argument to a local variable
+        local SMART_DEVICE=$1
+
+        # Determine where is smartctl
+        local SMARTCTL=`which smartctl` || return 3
+
+        # Check if Smart can Start the Test
+        SMART_TEST=`${SMARTCTL} -a ${SMART_DEVICE}`
+        local SMART_START_TEST=`echo "${SMART_TEST}" | egrep -i "please try adding|please specify device type" | wc -l`
+
+        if [ "${SMART_START_TEST}" != "0" ]; then
+                SMART_ERR_REPORT="NO"
+                return 5
+        fi
+}
+
+# Function check_disk_smart
+function check_disk_smart ()
+{
+	# Check if Smart can Start the Test
+	local SMART_START_TEST=`echo "${SMART_TEST}" | egrep -i "please try adding|please specify device type" | wc -l`
+
+	if [ "${SMART_START_TEST}" != "0" ]; then
+		SMART_ERR_REPORT="NO"
+		return 5
+	fi
+
+        # Check if any SMART Errors are Logged - DOUBLE SAFETY
+        local SMART_LOGGED_ERRORS=`echo "${SMART_TEST}" | grep "No Errors Logged" | wc -l`
+
+        # Errors are Logged
+        if [ "${SMART_LOGGED_ERRORS}" = "0" ]; then
+		ERROR_FOUND="YES"
+	else
+		ERROR_FOUND="NO"
+	fi
+
+	# Execute in-depth SMART checkup EVERY time
+                # Get SMART Important Data
+                SMART_TABLE_ERRORS=`echo "$SMART_TEST" | egrep "Raw_Read_Error_Rate|Reallocated_Sector_Ct|Reallocated_Event_Count|Current_Pending_Sector|Current_Pending_Sector|Uncorrectable_Error_Cnt|Offline_Uncorrectable|Wear_Leveling_Count|CRC_Error_Count|Media_Wearout_Indicator|End-to-End_Error|Reported_Uncorrect|UDMA_CRC_Error_Count|Multi_Zone_Error_Rate|Hardware_ECC_Recovered|Used_Rsvd_Blk_Cnt_Tot" | awk '{print $1":"$2":"$4":"$10}'` || return 4
+		errcount="0"
+		reverselogic="0"
+		treshold="0"
+                for error in ${SMART_TABLE_ERRORS}; do
+                        # Strip Delimiter ":"
+                        error=`echo ${error} |  sed  's/:/ /g'` || return 4
+                        # Create Array Containing Errors
+                        column[1]=`echo "${error}" | awk '{print $1}'` || return 4
+                        column[2]=`echo "${error}" | awk '{print $2}'` || return 4
+                        column[3]=`echo "${error}" | awk '{print $3}'` || return 4
+                        column[4]=`echo "${error}" | awk '{print $4}'` || return 4
+			flag=${column[2]}
+
+			case ${flag} in
+				# Log hardware ecc separately (for seagate drives specific condition)
+				Hardware_ECC_Recovered)
+					hecc=${column[4]}
+				;;
+				# Log raw read error rate separately (for seagate drives specific condition)
+				Raw_Read_Error_Rate)
+					rerr=${column[4]}
+					rerrset="1"
+				;;
+				Wear_Leveling_Count)
+					value=${column[3]}
+					reverselogic="1"
+					treshold="50"
+					WEAR=$value%
+				;;
+				Media_Wearout_Indicator)
+					value=${column[3]}
+					reverselogic="1"
+					treshold="50"
+					WEAR=$value%
+				;;
+				*)
+					value=${column[4]}
+					reverselogic="0"
+					treshold="0"
+				;;
+			esac
+			if [ "${reverselogic}" == "0" ]; then
+				if [[ "${value}" -gt "${treshold}" ]]; then
+                                	ERROR_FOUND="YES"
+					print_custom_output_state "${flag}" "${value}"
+					((errcount=errcount+1))
+				fi
+			elif [ "${reverselogic}" == "1" ]; then
+				if [[ "${value}" -lt "${treshold}" ]]; then
+                                       	ERROR_FOUND="YES"
+                                        print_custom_output_state "${flag}" "${value}"
+					((errcount=errcount+1))
+                                fi
+                        fi
+                done
+
+		# FOR SEAGATE DRIVES - Compare if raw read error matches or not the hardware ecc level and output error if not
+		if [[ ${HDDMODEL} == *"eagate"* ]]; then
+	                if [[ "${rerr}" != "${hecc}" ]]; then
+				print_custom_output_state "Raw_Read_Error_Rate" "$rerr"
+				ERROR_FOUND="YES"
+				((errcount=errcount+1))
+			fi
+               	fi
+
+                # Return 1 if Errors are found
+                if [ "${ERROR_FOUND}" = "YES" ]; then
+                        return 1
+                fi
+        # Return Code
+        return 0
+}
+
+#Function get_smart_poweron
+function get_smart_poweron ()
+{
+	POWERONRESULT=`echo "$SMART_TEST" | grep Power_On | awk '{print $10}'`
+}
+
+#Function get_smart_hddmodel
+function get_smart_hddmodel ()
+{
+	# Detect wether SSD or HDD
+	DEV=$(echo $WIPEDISK | awk -F'/' '{ print $3 }')
+	TYPE=$(cat /sys/block/$DEV/queue/rotational)
+	if [ $TYPE == "0" ]; then
+		DRIVETYPE="SSD"
+	elif [ $TYPE == "1" ]; then
+		DRIVETYPE="HDD"
+	else
+		DRIVETYPE="UNKNOWN"
+	fi
+
+        HDDMODEL=`echo "$SMART_TEST" | grep 'Device Model:' | awk '{$1=""; $2=""; sub("  ", ""); print}'`
+	HDDSERIAL=`echo "$SMART_TEST" | grep 'Serial Number:' | awk '{$1=""; $2=""; sub("  ", ""); print}'`
+}
+
+#Function test_diskread_speed
+function test_diskread_speed ()
+{
+	# Determine where is hdparm
+	local HDPARM=`which hdparm`
+
+	# Execute hdparm
+	READRESULT=`${HDPARM} -t $WIPEDISK | grep buffered | awk '{print $11" "$12}'`
+}
+
+#Function test_diskwrite_speed
+function test_diskwrite_speed ()
+{
+        # Determine where is dd
+        local DD=$(which dd)
+
+        # Execute dd
+        WRITERESULT=$(${DD} if=/dev/zero of=$WIPEDISK bs=1M count=1000 2>&1 | awk '/copied/ {print $8 " "  $9}')
+}
+
+#Function test_disk_iops
+function test_disk_iops ()
+{
+        # Determine where is fio
+        local FIO=$(which fio)
+
+	# Determine IOPS treshold for warning
+	local FTRESH="70000"
+
+        # Execute fio test
+        FIOTEST=$(${FIO} --loops=5 --size=1000m --filename=$WIPEDISK --stonewall --ioengine=libaio --direct=1   --name=4kQD32read --bs=4k --iodepth=32 --rw=randread   --name=4kQD32write --bs=4k --iodepth=32 --rw=randwrite)
+
+	# Grab data from read iops test
+	FIOREADIOPS=$(echo "$FIOTEST" | grep "read.*iops" |  awk -F'[=,]' '{print $6}')
+	FIOREADSPEED=$(echo "$FIOTEST" | grep "read.*iops" |  awk -F'[=,]' '{print $4}')
+	FIOREADRESULT=$(echo "${FIOREADIOPS}"iops @ "${FIOREADSPEED}")
+
+	# Grab data from write iops test
+        FIOWRITEIOPS=$(echo "$FIOTEST" | grep "write.*iops" |  awk -F'[=,]' '{print $6}')
+       	FIOWRITESPEED=$(echo "$FIOTEST" | grep "write.*iops" |  awk -F'[=,]' '{print $4}')
+        FIOWRITERESULT=$(echo "${FIOWRITEIOPS}"iops @ "${FIOWRITESPEED}")
+
+	# Parse results to see if IOPS are too low
+        if [[ ${FIOREADIOPS} <	${FTRESH} ]]; then
+		IOWARN="YES"
+	elif [[ ${FIOWRITEIOPS} < ${FTRESH} ]]; then
+		IOWARN="YES"
+	fi
+}
+
+#Function wipe_ata_se to ATA secure erase a drive
+function wipe_ata_se ()
+{
+	local HDPARM=`which hdparm`
+	# Verify if disk is frozen.
+	ISFROZEN=$(${HDPARM} -I $WIPEDISK | grep frozen)
+	if [[ ${ISFROZEN} == *"not"* ]]; then
+		# Setup drive security password through a random string (required for wipe)
+		# SECPASS=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1)
+
+		# GTCOMM Bypass for password; using gtcomm in case server crashes and we lock the drive forever.
+		SECPASS="gtcomm"
+		RUNSETPASS=$(${HDPARM} --user-master u --security-set-pass $SECPASS $WIPEDISK)
+
+		# Verify if drive has been locked properly
+		GETATAINFO=$(${HDPARM} -I $WIPEDISK)
+		ISENABLED=$(echo "${GETATAINFO}" | grep enabled)
+		if [[ ${ISENABLED} != *"not"* ]]; then
+		       	print_custom_output_state "Wipe method used" "ATA Secure Erase Enhaced"
+
+			# Recup duration estimate
+			ESTTIME=$(echo "${GETATAINFO}" | grep "SECURITY ERASE" | awk '{print $6}')
+		       	print_custom_output_state "Wipe estimated execution time" "${ESTTIME}"
+
+			RUNERASE="$(sh -c "TIMEFORMAT="%R"; time hdparm --user-master u --security-erase-enhanced $SECPASS $WIPEDISK &> /dev/null" 2>&1)"
+			print_custom_output_state "Wipe completed in" "$RUNERASE s"
+			# Verify if drive security is off, confirming that the wipe was successful
+	                ISENABLEDAFTER=$(hdparm -I $WIPEDISK | grep enabled)
+	                if [[ ${ISENABLEDAFTER} == *"not"* ]]; then
+				# Drive security is no longer enabled, wipe has completed successfully
+				print_custom_output_state "ATA Secure Erase Enhaced" "COMPLETED"
+				STATUS="Completed"
+			else
+				# Drive security is still enabled, wipe did not complete successfully
+				print_custom_output_state "ATA Secure Erase Enhaced" "FAILED"
+				STATUS="Failed"
+			fi
+		else
+                        print_custom_output_state "ATA Secure Erase Enhaced" "FAILED - Drive security undetected"
+			STATUS="Failed"
+                       	return 1
+		fi
+	else
+		echo "Drive $WIPEDISK appears to be frozen. You might have to reboot or investigate"
+		STATUS="Failed"
+		exit 1
+	fi
+}
+
+echo "- GloboTech DiskWipe Script. Use with caution! -"
+print_empty_line
+
+# Store the desired drive to wipe and determine the drive running the wipe station OS
+DATETIME=$(date '+%d/%m/%Y %H:%M:%S')
+STATUS="Success"
+WIPEDISK=$1
+ROOTFS=$(mount | grep "/ type ext4" | cut -d " " -f1)
+ROOTFS=$(printf '%s' "$ROOTFS" | sed 's/[0-9]//g')
+DISKLIST=$(lsblk | grep disk | awk '{print $1}')
+DISKID=$(echo $WIPEDISK | awk -F'/' '{ print $3 }')
+
+# Verify if an argument has been entered
+if [ $# -lt 1 ]; then
+        echo "Usage : ./wipe (/dev/sda)"
+        exit 1
+
+# Verify if you are dumb and try to wipe the loaded wipe station OS
+elif grep -q "$WIPEDISK" <<<$ROOTFS; then
+	echo "What are you trying to do? This is the current system drive. I won't let you wipe it!"
+	exit 1
+
+# Verify if drive appears in lsblk. Prevent failures
+elif [[ ${DISKLIST} != *"$DISKID"* ]]; then
+	echo "The disk you are attempting to wipe is not present on the system"
+	exit 1
+
+# Verify that format is proper and process!
+elif [[ $WIPEDISK == *dev/sd* ]]; then
+	# Run function to grab all smart data and store it to a global variable for future use
+	get_start_smart $WIPEDISK
+
+        # Recup previously initiated smart checkup and output drive information
+        get_smart_hddmodel
+        print_custom_output_state "Device model number:" "${HDDMODEL}"
+        print_custom_output_state "Device serial number:" "${HDDSERIAL}"
+	print_custom_output_state "Device type:" "${DRIVETYPE}"
+        print_empty_line
+
+        # Recup previously initiated smart checkup and output error information
+        echo "Scanning $WIPEDISK for SMART errors:"
+        check_disk_smart
+        print_empty_line
+
+	# Display more informations on the drive
+	get_smart_poweron
+	print_custom_output_state "SMART errors detected:" "${ERROR_FOUND}"
+	print_custom_output_state "SMART critical error amount:" "${errcount}"
+	print_custom_output_state "Disk age (power on hours):" "${POWERONRESULT}"
+	if [[ ${DRIVETYPE} == "SSD" ]]; then
+		print_custom_output_state "SSD Wear Level Remaining:" "${WEAR}"
+	fi
+	print_empty_line
+
+        echo "Device read and write performance evaluation"
+        # Get read and write speeds and display them
+        test_diskread_speed
+        print_custom_output_state "Device read speed:" "${READRESULT}"
+	test_diskwrite_speed
+        print_custom_output_state "Device write speed:" "${WRITERESULT}"
+
+	# Test disk IOPS only if drive is an SSD
+	if [[ ${DRIVETYPE} == "SSD" ]]; then
+		test_disk_iops
+		print_custom_output_state "Device 4K32Q read IOPS:" "${FIOREADRESULT}"
+		print_custom_output_state "Device 4K32Q write IOPS:" "${FIOWRITERESULT}"
+
+		if [[ ${IOWARN} == "YES" ]]; then
+			print_custom_output_state "Status of IOPS availability" "LOW, COMPARE WITH PRODUCT SPECIFICATIONS"
+		fi
+	fi
+	print_empty_line
+	# Proceed with drive wipe
+	wipe_ata_se
+	print_empty_line
+	echo "For any assistance regarding your services with GloboTech feel free to contact us at support.globo.tech or support@globo.tech"
+  echo "www.globo.tech"
+fi
+print_empty_line
+JQ=$(which jq)
+JSON_STRING=$( ${JQ} -n \
+		  --arg sl "${WIPEDISK}" \
+		  --arg dt "${DATETIME}" \
+	          --arg dm "${HDDMODEL}" \
+	          --arg sn "${HDDSERIAL}" \
+	          --arg dr "${DRIVETYPE}" \
+		  --arg sc "${errcount}" \
+		  --arg po "${POWERONRESULT}" \
+		  --arg wr "${WEAR}" \
+		  --arg rs "${READRESULT}" \
+		  --arg ws "${WRITERESULT}" \
+		  --arg st "${STATUS}" \
+		  --arg fr "${FIOREADSPEED}" \
+		  --arg ri "${FIOREADIOPS}" \
+		  --arg fw "${FIOWRITESPEED}" \
+		  --arg wi "${FIOWRITEIOPS}" \
+		  --arg we "${ESTTIME}" \
+		  --arg wc "${RUNERASE}" \
+                  '{slot: $sl, datetime: $dt, devicemodel: $dm, serial: $sn, type: $dr, errors: $sc, poweron: $po, ssdwear: $wr, readspeed: $rs, writespeed: $ws, fiorspeed: $fr, fioriops: $ri, fiowspeed: $fw, fiowiops: $wi, status: $st, esttime: $we, wipetime: $wc}' )
+echo $JSON_STRING
