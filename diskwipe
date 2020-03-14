@@ -405,7 +405,7 @@ function wipe_ata_se ()
 		GETATAINFO=$(${HDPARM} -I $WIPEDISK)
 		ISENABLED=$(echo "${GETATAINFO}" | grep enabled)
 		if [[ ${ISENABLED} != *"not"* ]]; then
-		       	print_custom_output_state "Wipe method used" "ATA Secure Erase Enhaced"
+		       	print_custom_output_state "Wipe method used" "ATA Secure Erase Enhanced"
 
 			# Recup duration estimate
 			ESTTIME=$(echo "${GETATAINFO}" | grep "SECURITY ERASE" | awk '{print $6}')
@@ -417,15 +417,15 @@ function wipe_ata_se ()
 	                ISENABLEDAFTER=$(hdparm -I $WIPEDISK | grep enabled)
 	                if [[ ${ISENABLEDAFTER} == *"not"* ]]; then
 				# Drive security is no longer enabled, wipe has completed successfully
-				print_custom_output_state "ATA Secure Erase Enhaced" "COMPLETED"
+				print_custom_output_state "ATA Secure Erase Enhanced" "COMPLETED"
 				STATUS="Completed"
 			else
 				# Drive security is still enabled, wipe did not complete successfully
-				print_custom_output_state "ATA Secure Erase Enhaced" "FAILED"
+				print_custom_output_state "ATA Secure Erase Enhanced" "FAILED"
 				STATUS="Failed"
 			fi
 		else
-                        print_custom_output_state "ATA Secure Erase Enhaced" "FAILED - Drive security undetected"
+                        print_custom_output_state "ATA Secure Erase Enhanced" "FAILED - Drive security undetected"
 			STATUS="Failed"
                        	return 1
 		fi
