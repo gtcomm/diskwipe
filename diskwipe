@@ -288,7 +288,7 @@ function check_disk_smart ()
 					((errcount=errcount+1))
 				fi
 			elif [ "${reverselogic}" == "1" ]; then
-				if [[ "${value}" -lt "${treshold}" ]]; then
+				if [[ ${value}" -lt ${treshold} ]]; then
                                        	ERROR_FOUND="YES"
                                         print_custom_output_state "${flag}" "${value}"
 					((errcount=errcount+1))
